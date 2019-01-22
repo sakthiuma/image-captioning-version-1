@@ -1,3 +1,23 @@
+driver.py
+
+Type
+Text
+Size
+17 KB (17,566 bytes)
+Storage used
+50 KB (51,457 bytes)
+Location
+image-captioning-updation-copy
+Owner
+me
+Modified
+Jan 21, 2019 by me
+Opened
+9:48 AM by me
+Created
+Jan 8, 2019 with Google Drive Web
+Add a description
+Viewers can download
 import argparse
 import json
 import time
@@ -12,7 +32,7 @@ import cPickle as pickle
 from imagernn.data_provider import getDataProvider
 from imagernn.solver import Solver
 from imagernn.imagernn_utils import decodeGenerator, eval_split
-from weights import calculateWeights, calcSigma
+from weights import calculateWeights, calcSigma, returnWeights
 
 def preProBuildWordVocab(sentence_iterator, word_count_threshold):
   # count up all word counts so that we can threshold
@@ -42,7 +62,7 @@ def preProBuildWordVocab(sentence_iterator, word_count_threshold):
     wordtoix[w] = ix
     ixtoword[ix] = w
     ix += 1
-
+  #print 'vocab:',vocab
   # compute bias vector, which is related to the log probability of the distribution
   # of the labels (words) and how often they occur. We will use this vector to initialize
   # the decoder weights, so that the loss function doesnt show a huge increase in performance
@@ -56,17 +76,17 @@ def preProBuildWordVocab(sentence_iterator, word_count_threshold):
   bias_init_vector -= np.max(bias_init_vector) # shift to nice numeric range
   return wordtoix, ixtoword, bias_init_vector
 
-def RNNGenCost(batch, model, params, misc):
+def RNNGenCost(batch, model, params, misc,weightCalculatedData):
   """ cost function, returns cost and gradients for model """
   regc = params['regc'] # regularization cost
   BatchGenerator = decodeGenerator(params)
   wordtoix = misc['wordtoix']
-
+  ixtoword = misc['ixtoword']
   # forward the RNN on each image sentence pair
   # the generator returns a list of matrices that have word probabilities
   # and a list of cache objects that will be needed for backprop
   Ys, gen_caches = BatchGenerator.forward(batch, model, params, misc, predict_mode = False)
-
+  
 
   # compute softmax costs for all generated sentences, and the gradients on top
   loss_cost = 0.0
@@ -76,19 +96,22 @@ def RNNGenCost(batch, model, params, misc):
   for i,pair in enumerate(batch):
     img = pair['image']
     imgid = img['imgid']
-
+    
     # ground truth indeces for this sentence we expect to see
     gtix = [ wordtoix[w] for w in pair['sentence']['tokens'] if w in wordtoix ]
+    
     gtix.append(0) # don't forget END token must be predicted in the end!
     # fetch the predicted probabilities, as rows
     Y = Ys[i]
+    wordWeights = np.array(returnWeights(imgid,gtix,ixtoword,weightCalculatedData))
     maxes = np.amax(Y, axis=1, keepdims=True)
     e = np.exp(Y - maxes) # for numerical stability shift into good numerical range
     P = e / np.sum(e, axis=1, keepdims=True)
-    print 'gtix len:', len(gtix)
-    print' log len:',np.log(1e-20 + P[range(len(gtix)),gtix]).shape # these two have same length
-    loss_cost += - np.sum(np.log(1e-20 + P[range(len(gtix)),gtix])) # note: add smoothing to not get infs
-    logppl += - np.sum(np.log2(1e-20 + P[range(len(gtix)),gtix])) # also accumulate log2 perplexities
+    #print 'gtix len:', len(gtix)
+    #print' log len:',np.log(1e-20 + P[range(len(gtix)),gtix]).shape # these two have same length
+    #print ' P[gtix]:',P.shape
+    loss_cost += - np.sum(np.multiply(wordWeights,np.log(1e-20 + P[range(len(gtix)),gtix]))) # note: add smoothing to not get infs
+    logppl += - np.sum(np.multiply(wordWeights,np.log2(1e-20 + P[range(len(gtix)),gtix]))) # also accumulate log2 perplexities
     logppln += len(gtix)
 
     # lets be clever and optimize for speed here to derive the gradient in place quickly
@@ -137,21 +160,21 @@ def main(params):
 
   # go over all training sentences and find the vocabulary we want to use, i.e. the words that occur
   # at least word_count_threshold number of times
-  print 'dp.iterSentences', dp.iterSentences('train')
+  #print 'dp.iterSentences', dp.iterSentences('train')
   misc['wordtoix'], misc['ixtoword'], bias_init_vector = preProBuildWordVocab(dp.iterSentences('train'), word_count_threshold)
-
+  #print 'type;',type(completeData)
   # calculate weights of all unique words in vocab
-  #wts = calculateWeights( misc['wordtoix'], misc['ixtoword'], completeData)
-  sigma = calcSigma(completeData)
-  print 'sigma :',sigma
-
+  weightComputedData=calculateWeights( misc['wordtoix'], misc['ixtoword'], completeData)
+  print 'Done:'
   # delegate the initialization of the model to the Generator class
   BatchGenerator = decodeGenerator(params)
+  
+  # initialize encoder and decoder weight matrices
   init_struct = BatchGenerator.init(params, misc)
   model, misc['update'], misc['regularize'] = (init_struct['model'], init_struct['update'], init_struct['regularize'])
 
   # force overwrite here. This is a bit of a hack, not happy about it
-  model['bd'] = bias_init_vector.reshape(1, bias_init_vector.size)
+  model['bd'] = bias_init_vector.reshape(1, bias_init_vector.size) # remove and check
 
   print 'model init done.'
   print 'model has keys: ' + ', '.join(model.keys())
@@ -168,7 +191,7 @@ def main(params):
   solver = Solver()
   def costfun(batch, model):
     # wrap the cost function to abstract some things away from the Solver
-    return RNNGenCost(batch, model, params, misc)
+    return RNNGenCost(batch, model, params, misc, weightComputedData)
 
   # calculate how many iterations we need
   num_sentences_total = dp.getSplitSize('train', ofwhat = 'sentences')
@@ -274,8 +297,6 @@ def main(params):
           except Exception, e: # todo be more clever here
             print 'tried to write checkpoint into %s but got error: ' % (filepat, )
             print e
-
-
 if __name__ == "__main__":
 
   parser = argparse.ArgumentParser()
@@ -302,7 +323,7 @@ if __name__ == "__main__":
 
   # optimization parameters
   parser.add_argument('-c', '--regc', dest='regc', type=float, default=1e-8, help='regularization strength')
-  parser.add_argument('-m', '--max_epochs', dest='max_epochs', type=int, default=2, help='number of epochs to train for')
+  parser.add_argument('-m', '--max_epochs', dest='max_epochs', type=int, default=1, help='number of epochs to train for')
   parser.add_argument('--solver', dest='solver', type=str, default='rmsprop', help='solver type: vanilla/adagrad/adadelta/rmsprop')
   parser.add_argument('--momentum', dest='momentum', type=float, default=0.0, help='momentum for vanilla sgd')
   parser.add_argument('--decay_rate', dest='decay_rate', type=float, default=0.999, help='decay rate for adadelta/rmsprop')
@@ -314,7 +335,7 @@ if __name__ == "__main__":
   parser.add_argument('--drop_prob_decoder', dest='drop_prob_decoder', type=float, default=0.5, help='what dropout to apply right before the decoder in an RNN/LSTM')
 
   # data preprocessing parameters
-  parser.add_argument('--word_count_threshold', dest='word_count_threshold', type=int, default=5, help='if a word occurs less than this number of times in training data, it is discarded')
+  parser.add_argument('--word_count_threshold', dest='word_count_threshold', type=int, default=1, help='if a word occurs less than this number of times in training data, it is discarded')
 
   # evaluation parameters
   parser.add_argument('-p', '--eval_period', dest='eval_period', type=float, default=1.0, help='in units of epochs, how often do we evaluate on val set?')
