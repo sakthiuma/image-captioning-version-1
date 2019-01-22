@@ -1,11 +1,33 @@
+weights.py
+
+Type
+Text
+Size
+3 KB (3,079 bytes)
+Storage used
+5 KB (4,870 bytes)
+Location
+image-captioning-updation-copy
+Owner
+me
+Modified
+Jan 21, 2019 by me
+Opened
+10:11 AM by me
+Created
+Jan 16, 2019 with Google Drive Web
+Add a description
+Viewers can download
 import numpy as np
 import math
+import json
 from numpy import linalg as la
 
 def featureSubtraction(a,b):
     """ subtracts two vectors and returns norm of result """
     subResult = np.subtract(a,b)
     normResult = math.pow(la.norm(subResult),2)
+    #print 'subtracted features',normResult
     return normResult
 
 def calcSigma(data):
@@ -30,17 +52,57 @@ def getImageIds(word,data):
     for img in data:       ##i dont think this is possible. If its not, there will be no problem with unknown
         if word in img['tokens']:  ##word weight calculation.
             GSi.append(img)
-            continue
+            
+    #print 'Gsi',GSi
     return GSi
 
 def calculateWeights(wordtoixdict, ixtoworddict, data):
     """ calculates weight of each word relative to the image it appears in """
+    weightJsonData=[]
     sigma = calcSigma(data)
+    
     for img in data :
+        #print '1'
         #if img['imgid'] == 1241:
             #print 'Feats :', img['feats'] # Testing if feats has been copied correctly
         for Si in img['tokens']:
             # get list of image ids that also contain this word
             GSi = getImageIds(Si,data)
+            Ksig=0
             for im in GSi:
                 subtractedFeats = featureSubtraction(img['feats'],im['feats']) # subtract I - Ij
+                val = -(subtractedFeats/sigma)
+                Ksigi=math.exp(val) 
+                #print 'Ksigi',Ksigi
+                Ksig+=Ksigi
+            weight=Ksig/len(GSi)
+            img['tokenWeight'].append(weight)
+        wtjson = {}
+        wtjson['imgid'] = img['imgid']
+        wtjson['feats'] = img['feats']
+        wtjson['filename'] = img['filename']
+        wtjson['tokens'] = img['tokens']
+        wtjson['tokenWeight'] = img['tokenWeight']
+        
+        weightJsonData.append(wtjson)   
+    with open('weightJsonData.json', 'w') as outfile:
+        json.dump(weightJsonData, outfile)
+  
+    #print data
+    return data
+    
+def returnWeights(imgid,gtix,ixtoword,data):
+  for img in data:
+    if img['imgid'] == imgid :
+      wordWeights = []
+      #print 'gtix:',gtix
+      for idx in gtix :
+        word = ixtoword[idx]
+        #print 'ixtoword[idx]:',word
+        if word == '.':
+          wordWeights.append(1)
+        else:
+          position = img['tokens'].index(word) ##return position of word from list of words in caption
+          wt = img['tokenWeight'][position]
+          wordWeights.append(wt)
+  return wordWeights
