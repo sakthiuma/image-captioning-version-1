@@ -1,3 +1,23 @@
+data_provider.py
+
+Type
+Text
+Size
+5 KB (5,241 bytes)
+Storage used
+10 KB (10,446 bytes)
+Location
+imagernn
+Owner
+me
+Modified
+Jan 16, 2019 by me
+Opened
+Jan 21, 2019 by me
+Created
+Jan 16, 2019 with Google Drive Web
+Add a description
+Viewers can download
 import json
 import os
 import random
@@ -72,6 +92,7 @@ class BasicDataProvider:
                 if word not in words:
                     words.append(word)
           dataObj['tokens'] = words
+          dataObj['tokenWeight']=[]
           data.append(dataObj)
       return data
 
